@@ -1,0 +1,240 @@
+USE DATABASE DB_TEAM_VRR;
+USE SCHEMA GOLD;
+
+-- ## Which channels are growing fastest, stable, or declining over time?
+CREATE OR REPLACE TABLE GOLD.CHANNEL_GROWTH_METRICS AS
+WITH ordered AS (
+    SELECT
+        f.CHANNEL_SK,
+        c.CHANNEL_ID,
+        c.CHANNEL_NAME,
+        cat.CATEGORY_NAME,
+        co.COUNTRY_CODE,
+        f.LOAD_DATE,
+        f.SUBSCRIBER_COUNT,
+        f.VIEW_COUNT,
+        LAG(f.SUBSCRIBER_COUNT) OVER (
+            PARTITION BY f.CHANNEL_SK ORDER BY f.LOAD_DATE
+        ) AS PREV_SUBS,
+        LAG(f.VIEW_COUNT) OVER (
+            PARTITION BY f.CHANNEL_SK ORDER BY f.LOAD_DATE
+        ) AS PREV_VIEWS
+    FROM DB_TEAM_VRR.SILVER.FACT_CHANNEL_METRICS f
+    JOIN DB_TEAM_VRR.SILVER.DIM_CHANNEL c
+        ON f.CHANNEL_SK = c.CHANNEL_SK
+    LEFT JOIN DB_TEAM_VRR.SILVER.DIM_CATEGORY cat
+        ON c.CATEGORY_SK = cat.CATEGORY_SK
+    LEFT JOIN DB_TEAM_VRR.SILVER.DIM_COUNTRY co
+        ON c.COUNTRY_SK = co.COUNTRY_SK
+),
+growth AS (
+    SELECT
+        *,
+        SUBSCRIBER_COUNT - PREV_SUBS AS SUBS_DELTA,
+        VIEW_COUNT       - PREV_VIEWS AS VIEWS_DELTA,
+        IFF(PREV_SUBS IS NULL OR PREV_SUBS = 0, NULL,
+            (SUBSCRIBER_COUNT - PREV_SUBS) / PREV_SUBS::FLOAT
+        ) AS SUBS_GROWTH_PCT,
+        IFF(PREV_VIEWS IS NULL OR PREV_VIEWS = 0, NULL,
+            (VIEW_COUNT - PREV_VIEWS) / PREV_VIEWS::FLOAT
+        ) AS VIEWS_GROWTH_PCT
+    FROM ordered
+)
+SELECT
+    CHANNEL_SK,
+    CHANNEL_ID,
+    CHANNEL_NAME,
+    CATEGORY_NAME,
+    COUNTRY_CODE,
+    LOAD_DATE,
+    SUBSCRIBER_COUNT,
+    VIEW_COUNT,
+    SUBS_DELTA,
+    VIEWS_DELTA,
+    SUBS_GROWTH_PCT,
+    VIEWS_GROWTH_PCT,
+    CASE
+        WHEN PREV_SUBS IS NULL THEN 'NEW'
+        WHEN SUBS_GROWTH_PCT >= 0.10 THEN 'RISING'
+        WHEN SUBS_GROWTH_PCT <= -0.05 THEN 'DECLINING'
+        ELSE 'STABLE'
+    END AS GROWTH_LABEL
+FROM growth;
+
+
+-- Which channels are “punching above their weight” compared to their category?
+
+CREATE OR REPLACE TABLE GOLD.CHANNEL_EFFICIENCY_LEADERBOARD AS
+WITH latest AS (
+    SELECT MAX(LOAD_DATE) AS LOAD_DATE
+    FROM DB_TEAM_VRR.SILVER.FACT_CHANNEL_METRICS
+),
+base AS (
+    SELECT
+        f.LOAD_DATE,
+        c.CHANNEL_SK,
+        c.CHANNEL_ID,
+        c.CHANNEL_NAME,
+        cat.CATEGORY_NAME,
+        co.COUNTRY_CODE,
+        f.VIEW_COUNT,
+        f.SUBSCRIBER_COUNT,
+        f.VIDEO_COUNT,
+        IFF(f.VIDEO_COUNT = 0, NULL,
+            f.VIEW_COUNT / f.VIDEO_COUNT::FLOAT
+        ) AS VIEWS_PER_VIDEO,
+        IFF(f.SUBSCRIBER_COUNT = 0, NULL,
+            f.VIEW_COUNT / f.SUBSCRIBER_COUNT::FLOAT
+        ) AS VIEWS_PER_SUB
+    FROM DB_TEAM_VRR.SILVER.FACT_CHANNEL_METRICS f
+    JOIN DB_TEAM_VRR.SILVER.DIM_CHANNEL c
+        ON f.CHANNEL_SK = c.CHANNEL_SK
+    LEFT JOIN DB_TEAM_VRR.SILVER.DIM_CATEGORY cat
+        ON c.CATEGORY_SK = cat.CATEGORY_SK
+    LEFT JOIN DB_TEAM_VRR.SILVER.DIM_COUNTRY co
+        ON c.COUNTRY_SK = co.COUNTRY_SK
+    JOIN latest l
+        ON f.LOAD_DATE = l.LOAD_DATE
+),
+cat_avg AS (
+    SELECT
+        CATEGORY_NAME,
+        AVG(VIEWS_PER_VIDEO) AS AVG_VPV,
+        AVG(VIEWS_PER_SUB)   AS AVG_VPS
+    FROM base
+    GROUP BY CATEGORY_NAME
+)
+SELECT
+    b.LOAD_DATE,
+    b.CHANNEL_SK,
+    b.CHANNEL_ID,
+    b.CHANNEL_NAME,
+    b.CATEGORY_NAME,
+    b.COUNTRY_CODE,
+    b.VIEW_COUNT,
+    b.SUBSCRIBER_COUNT,
+    b.VIDEO_COUNT,
+    b.VIEWS_PER_VIDEO,
+    b.VIEWS_PER_SUB,
+    b.VIEWS_PER_VIDEO / NULLIF(ca.AVG_VPV,0) AS VPV_EFFICIENCY_INDEX,
+    b.VIEWS_PER_SUB   / NULLIF(ca.AVG_VPS,0) AS VPS_EFFICIENCY_INDEX
+FROM base b
+LEFT JOIN cat_avg ca
+    USING (CATEGORY_NAME);
+
+
+-- What’s the content mix by country? Which categories dominate each region?
+
+CREATE OR REPLACE TABLE GOLD.COUNTRY_PORTFOLIO_SHARE AS
+WITH latest AS (
+    SELECT MAX(LOAD_DATE) AS LOAD_DATE
+    FROM DB_TEAM_VRR.SILVER.FACT_CHANNEL_METRICS
+),
+country_cat AS (
+    SELECT
+        f.LOAD_DATE,
+        co.COUNTRY_CODE,
+        cat.CATEGORY_NAME,
+        SUM(f.SUBSCRIBER_COUNT) AS TOTAL_SUBS,
+        SUM(f.VIEW_COUNT)       AS TOTAL_VIEWS
+    FROM DB_TEAM_VRR.SILVER.FACT_CHANNEL_METRICS f
+    JOIN DB_TEAM_VRR.SILVER.DIM_CHANNEL c
+        ON f.CHANNEL_SK = c.CHANNEL_SK
+    LEFT JOIN DB_TEAM_VRR.SILVER.DIM_CATEGORY cat
+        ON c.CATEGORY_SK = cat.CATEGORY_SK
+    LEFT JOIN DB_TEAM_VRR.SILVER.DIM_COUNTRY co
+        ON c.COUNTRY_SK = co.COUNTRY_SK
+    JOIN latest l
+        ON f.LOAD_DATE = l.LOAD_DATE
+    GROUP BY f.LOAD_DATE, co.COUNTRY_CODE, cat.CATEGORY_NAME
+),
+country_tot AS (
+    SELECT
+        LOAD_DATE,
+        COUNTRY_CODE,
+        SUM(TOTAL_SUBS)  AS COUNTRY_SUBS,
+        SUM(TOTAL_VIEWS) AS COUNTRY_VIEWS
+    FROM country_cat
+    GROUP BY LOAD_DATE, COUNTRY_CODE
+)
+SELECT
+    cc.LOAD_DATE,
+    cc.COUNTRY_CODE,
+    cc.CATEGORY_NAME,
+    cc.TOTAL_SUBS,
+    cc.TOTAL_VIEWS,
+    cc.TOTAL_SUBS  / NULLIF(ct.COUNTRY_SUBS,0)  AS SUBS_SHARE_OF_COUNTRY,
+    cc.TOTAL_VIEWS / NULLIF(ct.COUNTRY_VIEWS,0) AS VIEWS_SHARE_OF_COUNTRY
+FROM country_cat cc
+JOIN country_tot ct
+  ON cc.LOAD_DATE   = ct.LOAD_DATE
+ AND cc.COUNTRY_CODE = ct.COUNTRY_CODE;
+
+
+select * from COUNTRY_PORTFOLIO_SHARE
+
+
+
+----- Build a Cortex Search service to search on the descriptive column
+----- in the bronze layer and try few searches.
+
+USE DATABASE DB_TEAM_VRR;
+USE SCHEMA BRONZE;
+
+select * from DB_TEAM_VRR.BRONZE.YOUTUBE_CHANNELS_RAW limit 5;
+
+DESC TABLE DB_TEAM_VRR.BRONZE.YOUTUBE_CHANNELS_RAW;
+
+select "channel_id" from YOUTUBE_CHANNELS_RAW
+
+CREATE OR REPLACE VIEW YT_CHANNELS_SEARCH_SRC AS
+SELECT
+  "channel_id"    AS CHANNEL_ID,
+  "channel_name"  AS CHANNEL_NAME,
+  "category"      AS CATEGORY,
+  "country"       AS COUNTRY,
+  "description"   AS DESCRIPTION
+FROM DB_TEAM_VRR.BRONZE.YOUTUBE_CHANNELS_RAW
+WHERE "description" IS NOT NULL;
+
+CREATE OR REPLACE CORTEX SEARCH SERVICE YT_CHANNEL_SEARCH
+  ON (DESCRIPTION)
+  WAREHOUSE = ANIMAL_TASK_WH
+  TARGET_LAG = '1 hour'
+  AS (
+    SELECT
+      CHANNEL_ID,
+      CHANNEL_NAME,
+      CATEGORY,
+      COUNTRY,
+      DESCRIPTION
+    FROM DB_TEAM_VRR.BRONZE.YT_CHANNELS_SEARCH_SRC
+  );
+
+
+-- 1) K-pop / Korean music channels
+SELECT SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+  'YT_CHANNEL_SEARCH',
+  '{
+    "query": "K-pop or Korean pop music channel",
+    "limit": 5
+  }'
+);
+
+-- 2) Indian entertainment / film content
+SELECT SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+  'YT_CHANNEL_SEARCH',
+  '{
+    "query": "Indian entertainment and film content",
+    "limit": 5
+  }'
+);
+
+-- 3) Gaming / action-adventure channels
+SELECT SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+  'YT_CHANNEL_SEARCH',
+  '{
+    "query": "gaming channel with action and role-playing games",
+    "limit": 5
+  }'
+);
