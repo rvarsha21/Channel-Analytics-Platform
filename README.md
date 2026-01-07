@@ -6,13 +6,13 @@ This project establishes a scalable, end-to-end data platform in Snowflake to an
 
 ## Workflow
 
-| Stage | Description | Tech Stack |
-| :--- | :--- | :--- |
-| **Data Ingestion (Bronze)** | Ingested raw YouTube API/CSV data into a landing zone, preserving original formatting for auditability and lineage. | Snowflake SQL, Staging |
-| **Data Modeling (Silver)** | Designed a Star Schema (Facts & Dimensions) and implemented **incremental loading** logic to process only new records, reducing compute costs and ensuring freshness. | Snowflake, SQL |
-| **AI Enrichment** | Applied Cortex AI SQL functions directly to raw text descriptions to generate sentiment scores (Positive/Neutral) without external ETL tools. | Snowflake Cortex AI |
-| **Business Logic (Gold)** | Aggregated data into specialized tables for high-value metrics, identifying "Efficiency Leaders" and calculating market dominance. | SQL, DBT |
-| **Analytics & UI** | Deployed a Streamlit dashboard for visualization and integrated **Cortex Analyst** to enable natural language querying for business users. | Streamlit, Cortex Analyst |
+| Stage | Description | 
+| :--- | :--- |
+| **Data Ingestion (Bronze)** | Ingested raw YouTube API/CSV data into a landing zone, preserving original formatting for auditability and lineage. 
+| **Data Modeling (Silver)** | Designed a Star Schema (Facts & Dimensions) and implemented **incremental loading** logic to process only new records, reducing compute costs and ensuring freshness. 
+| **AI Enrichment** | Applied Cortex AI SQL functions directly to raw text descriptions to generate sentiment scores (Positive/Neutral) without external ETL tools. 
+| **Business Logic (Gold)** | Aggregated data into specialized tables for high-value metrics, identifying "Efficiency Leaders" and calculating market dominance. 
+| **Analytics & UI** | Deployed a Streamlit dashboard for visualization and integrated **Cortex Analyst** to enable natural language querying for business users. 
 
 ## Objectives
 
