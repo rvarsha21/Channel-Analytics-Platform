@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This project establishes a scalable, end-to-end data platform in Snowflake to analyze over 15,000 YouTube channels. Moving beyond traditional ETL, this solution implements a robust Medallion Architecture (Bronze, Silver, Gold) and leverages Snowflake’s native AI capabilities—specifically Cortex AI for sentiment analysis and Cortex Analyst for Text-to-SQL search—to democratize data access and uncover actionable content strategies.
+This project establishes a scalable, end-to-end data platform in Snowflake to analyze over 15,000 YouTube channels. Moving beyond traditional ETL, this solution implements a robust Medallion Architecture (Bronze, Silver, Gold) and leverages Snowflake’s native AI capabilities, specifically Cortex AI for sentiment analysis and Cortex Analyst for natural language querying.
 
 ## Workflow
 
